@@ -1,0 +1,57 @@
+# Game files, keys and anything made from them never go in this repository.
+# They live in the work folder outside it (e.g. an external drive).
+
+# keys
+*.keys
+*.key
+*.tik
+*.cert
+
+# game dumps and their contents
+*.nsp
+*.nsz
+*.xci
+*.xcz
+*.nca
+*.ncz
+*.nso
+*.nro
+*.npdm
+*.cpk
+*.usm
+*.acb
+*.awb
+exefs/
+romfs/
+game/
+gamedata/
+
+# code generated from the game
+generated/
+generated-*/
+
+# build output, IPAs, signing
+build/
+out/
+*.ipa
+*.app/
+*.mobileprovision
+*.p12
+*.cer
+*.dSYM/
+
+# saves, logs, local settings
+save/
+saves/
+*.log
+env.txt
+.DS_Store
+
+# local settings and development-only tools
+local.mk
+__pycache__/
+*.pyc
+tools/abort_sites.py
+tools/sym.py
+tools/symb.py
+ios/tools/
