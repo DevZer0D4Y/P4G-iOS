@@ -14,15 +14,18 @@ GENFLAGS := $(TARGET) -O1 -fno-strict-aliasing -Wno-return-type -Wno-unused-labe
 PREFIX   := -ffile-prefix-map=$(CURDIR)/=  -ffile-prefix-map=$(HOME)/=~/
 RTFLAGS  := $(TARGET) -O2 -g -fno-strict-aliasing -Wall -Wno-unused-function -Wno-unused-variable \
             -Wno-unused-but-set-variable -Wno-deprecated-declarations -Wno-format -DGAMELIB_STATIC \
-            -Iruntime -Iruntime/nvn -I$(DEPS)/include -I$(B)/inc -Ithird_party/smaa/Textures $(PREFIX)
+            -Iruntime -Iruntime/nvn -I$(DEPS)/include -I$(B)/inc -Ithird_party/smaa/Textures -Ithird_party/zstd -DZSTD_DISABLE_ASM $(PREFIX)
 FRAMEWORKS := UIKit Foundation CoreFoundation Metal MetalFX QuartzCore CoreGraphics CoreText ImageIO GameController AVFoundation \
               AudioToolbox CoreAudio CoreHaptics CoreMotion CoreBluetooth UniformTypeIdentifiers CoreVideo CoreMedia \
               VideoToolbox Security
 LDFLAGS  := $(TARGET) -L$(DEPS)/lib -lSDL3 -lavformat -lavcodec -lswscale -lavutil -lc++ -liconv \
             $(addprefix -framework ,$(FRAMEWORKS))
 
+# zstd's decoder, for NSZ / XCZ dumps (ios/src/importer.c)
+ZSTD_SRC := $(wildcard third_party/zstd/common/*.c) $(wildcard third_party/zstd/decompress/*.c)
 RT_SRC   := $(wildcard runtime/*.c) $(wildcard runtime/hle/*.c) $(wildcard runtime/services/*.c) \
-            $(wildcard runtime/nvn/*.c) $(wildcard runtime/nvn/maxwell/*.c) runtime/platform/macos.c
+            $(wildcard runtime/nvn/*.c) $(wildcard runtime/nvn/maxwell/*.c) runtime/platform/macos.c \
+            $(wildcard ios/src/*.c) $(ZSTD_SRC)
 RT_M     := $(wildcard runtime/nvn/*.m) $(wildcard ios/src/*.m)
 RT_HDRS  := $(wildcard runtime/*.h runtime/*/*.h runtime/nvn/maxwell/*.h ios/src/*.h)
 RT_OBJ   := $(patsubst %.c,$(B)/rt/%.o,$(RT_SRC)) $(patsubst %.m,$(B)/rt/%.o,$(RT_M))

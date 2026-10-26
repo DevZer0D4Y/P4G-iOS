@@ -7,6 +7,7 @@
 //   ZL L         top left                         ZR R   right, below the game's date and weather
 //   - +          top centre                       L3 R3  bottom corners
 // Hidden while a game controller is connected (Settings "Touch pad": Auto), or always shown / never.
+// Also the frame-rate counter (Settings "Show FPS"), right of ZL in the game's yellow.
 #import <GameController/GameController.h>
 #import <UIKit/UIKit.h>
 #include <SDL3/SDL.h>
@@ -150,6 +151,43 @@ static void update_visibility(void) {
     if (!show) input_touch_set(0, 0, 0, 0, 0);
 }
 
+// ------------------------------------------------------------------ the frame-rate counter
+static UILabel *g_fps;
+
+static void fps_tick(UIView *host) {
+    extern uint64_t renderer_present_count(void);
+    extern volatile int g_app_inactive;
+    static uint64_t last_frames;
+    static CFTimeInterval last_time;
+    uint64_t frames = renderer_present_count();
+    CFTimeInterval now = CACurrentMediaTime();
+    if (last_time > 0 && now > last_time && !g_app_inactive)
+        g_fps.text = [NSString stringWithFormat:@"%.0f FPS", (double)(frames - last_frames) / (now - last_time)];
+    last_frames = frames, last_time = now;
+    UIEdgeInsets in = host.safeAreaInsets;
+    CGFloat s = g_settings.touch_scale > 0 ? g_settings.touch_scale : 1;
+    // right of the ZL plate (touch_style.h: at the left edge, 84 points wide); the corner when the pad is hidden
+    CGFloat x = g_touch.hidden ? fmax(in.left, 18) : fmax(in.left, 18) + 84 * s + 12;
+    [g_fps sizeToFit];
+    CGRect f = g_fps.frame;
+    g_fps.frame = CGRectMake(x, fmax(in.top, 10), f.size.width + 14, 22);
+}
+
+static void fps_attach(UIView *host) {
+    g_fps = [UILabel new];
+    g_fps.font = [UIFont monospacedDigitSystemFontOfSize:13 weight:UIFontWeightHeavy];
+    g_fps.textColor = [UIColor colorWithRed:1.0 green:0.894 blue:0.0 alpha:1];
+    g_fps.backgroundColor = [UIColor colorWithWhite:0 alpha:0.55];
+    g_fps.textAlignment = NSTextAlignmentCenter;
+    g_fps.layer.cornerRadius = 4;
+    g_fps.layer.masksToBounds = YES;
+    g_fps.userInteractionEnabled = NO;  // (touches go on to the pad and the game)
+    g_fps.text = @"-- FPS";
+    [host addSubview:g_fps];
+    fps_tick(host);
+    [NSTimer scheduledTimerWithTimeInterval:0.5 repeats:YES block:^(NSTimer *t) { fps_tick(host); }];
+}
+
 // Called once the game's SDL window exists (runtime/nvn/metal.m ui_window_init)
 void ios_touch_attach(SDL_Window *window) {
     UIWindow *w = (__bridge UIWindow *)SDL_GetPointerProperty(SDL_GetWindowProperties(window),
@@ -162,4 +200,5 @@ void ios_touch_attach(SDL_Window *window) {
         [NSNotificationCenter.defaultCenter addObserverForName:n object:nil queue:NSOperationQueue.mainQueue
                                                     usingBlock:^(NSNotification *note) { update_visibility(); }];
     update_visibility();
+    if (g_settings.show_fps) fps_attach(host);
 }

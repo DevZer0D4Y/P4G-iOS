@@ -13,11 +13,14 @@ your files, and the IPA it makes holds that code: it is for your own device; don
 - Locked 60 fps (or the game's original 30, in the launcher).
 - On-screen controls in the game's yellow-and-black style: a floating left stick, a camera drag on the right, ABXY,
   d-pad, shoulders, `-` / `+`. They hide while a game controller is connected (or set them always on / off).
+- **Imports your dump on the phone**: tap *Import* in the launcher and pick your NSP, NSZ, XCI or XCZ together with
+  your `prod.keys` (or put them in Files → On My iPhone → Persona 4 Golden). It is decrypted and unpacked on the
+  device; afterwards the launcher offers to delete the dump to free its space.
 - A launcher that checks your game files and shows your save folder.
 - **Your save in a folder**: the game's save data is `Save/` in the app's Documents (Files app → On My iPhone →
   Persona 4 Golden → Save). Copy a save from MeloNX / Ryujinx (the files in `bis/user/save/<id>/<user>/`) in, or copy
   yours out.
-- Resolution scale, frame-rate counter, haptics, controller support.
+- Resolution scale, an on-screen frame-rate counter (*Show FPS*), haptics, controller support.
 
 ## Building (on a Mac with Xcode)
 
@@ -42,8 +45,12 @@ your files, and the IPA it makes holds that code: it is for your own device; don
    The first build lifts the game's code to C (a few seconds) and compiles about 350 files (a few minutes).
 
 4. **Install** the IPA with your sideloading tool (ESign, AltStore, SideStore, Sideloadly). Let it keep the
-   *Increased Memory Limit* entitlement. Then copy `exefs/` and `romfs/` into the app's `game` folder with the Files
-   app, or over USB: `ios/push-game-files.sh work`.
+   *Increased Memory Limit* and *Extended Virtual Addressing* entitlements.
+
+5. **Add the game data**: open the app, tap *Import* and pick your dump and `prod.keys` in the file picker (both at
+   once), or copy them into the app's folder in the Files app first. It needs about 10 GB free (the dump itself can
+   live on iCloud Drive or a USB drive). Already extracted? Copy `exefs/` and `romfs/` into the app's `game` folder
+   instead, or over USB: `ios/push-game-files.sh work`.
 
 ## Running it on a Mac (development)
 
@@ -57,7 +64,8 @@ your files, and the IPA it makes holds that code: it is for your own device; don
 - `runtime/` — the Horizon kernel and services (`kernel.c`, `ipc.c`, `services/`), host implementations of SDK
   libraries (`hle/`: NVN bootstrap, `vi`, the movie decoder on FFmpeg), the NVN → Metal renderer and the Maxwell
   shader translator (`nvn/`).
-- `ios/` — the app: launcher, touch controls, build and packaging scripts.
+- `ios/` — the app: launcher, the on-device importer (`importer.c`: NSP / NSZ / XCI / XCZ, NCA decryption, NCZ
+  streams), touch controls, build and packaging scripts.
 
 ## Credits
 
@@ -65,7 +73,7 @@ your files, and the IPA it makes holds that code: it is for your own device; don
   renderer this port is built from (`LICENSE.LASRecomp`).
 - **[nxnative](https://github.com/seedds/nxnative)** (MIT, seedds): its notes and host code were the reference for SDK
   14 behaviour, CRI Sofdec2 movies and the decoder protocol.
-- **SMAA** (MIT, `third_party/smaa`), **SDL3** (zlib), **FFmpeg** (LGPL 2.1, linked statically: rebuild with your own
+- **SMAA** (MIT, `third_party/smaa`), **zstd** (BSD, Meta; its decoder in `third_party/zstd`), **SDL3** (zlib), **FFmpeg** (LGPL 2.1, linked statically: rebuild with your own
   FFmpeg to replace it).
 
 Persona 4 Golden is © ATLUS / SEGA. This project is not affiliated with them or with Nintendo.

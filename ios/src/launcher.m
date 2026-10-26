@@ -1,7 +1,10 @@
 // The start screen, in Persona 4 Golden's own colours (the yellow and black of the TV world): whether the game files
-// are in place, the save folder, the settings that matter on a phone, and Play.
+// are in place, importing them from the player's dump, the save folder, the settings that matter on a phone, and Play.
 #import <UIKit/UIKit.h>
+#import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 
+#include "gamelib.h"
+#include "importer.h"
 #include "launcher.h"
 #include "settings.h"
 
@@ -81,6 +84,64 @@ static void join_split_files(NSString *dir) {
     }
 }
 
+// ------------------------------------------------------------------ importing the game from an NSP / NSZ / XCI / XCZ
+// The dump is picked in the Files picker (read where it is, not copied), or found in the app's own folder (Files → On
+// My iPhone → Persona 4 Golden). prod.keys likewise: picked along with it (kept in the app's private Library), or in
+// the folder. ios/src/importer.c unpacks it into Documents/.import, then that replaces game/exefs and game/romfs.
+static ImportJob g_imp;
+static volatile BOOL g_importing;
+
+static NSString *private_dir(void) {  // Library/Application Support: picked keys (not shown in Files)
+    NSString *d = [NSSearchPathForDirectoriesInDomains(NSApplicationSupportDirectory, NSUserDomainMask, YES).firstObject
+                   stringByAppendingPathComponent:@"keys"];
+    [NSFileManager.defaultManager createDirectoryAtPath:d withIntermediateDirectories:YES attributes:nil error:nil];
+    return d;
+}
+
+static NSString *find_keys(NSString *docs) {
+    NSFileManager *fm = NSFileManager.defaultManager;
+    for (NSString *p in @[[docs stringByAppendingPathComponent:@"prod.keys"], [docs stringByAppendingPathComponent:@"keys.txt"],
+                          [private_dir() stringByAppendingPathComponent:@"prod.keys"]])
+        if ([fm fileExistsAtPath:p]) return p;
+    for (NSString *f in [fm contentsOfDirectoryAtPath:docs error:nil])
+        if ([f.pathExtension.lowercaseString isEqualToString:@"keys"] && ![f.lowercaseString isEqualToString:@"title.keys"])
+            return [docs stringByAppendingPathComponent:f];
+    return nil;
+}
+
+static NSString *find_dump(NSString *docs) {  // a dump put in the app's folder (the largest, if there are several)
+    NSString *best = nil;
+    unsigned long long best_size = 0;
+    for (NSString *f in [NSFileManager.defaultManager contentsOfDirectoryAtPath:docs error:nil]) {
+        if (!import_is_game_file(f.fileSystemRepresentation)) continue;
+        NSString *p = [docs stringByAppendingPathComponent:f];
+        unsigned long long sz = [NSFileManager.defaultManager attributesOfItemAtPath:p error:nil].fileSize;
+        if (sz >= best_size) best = p, best_size = sz;
+    }
+    return best;
+}
+
+extern const GameLibTables *p4g_game_tables(void);
+
+// after the ExeFS: the game's build must be the one this app's code was made from
+static bool check_build(const char *exefs, char *why, size_t why_size) {
+    char dir[1100], want[GAMELIB_FULL_ID_SIZE] = "";
+    snprintf(dir, sizeof dir, "%s", exefs);
+    char *slash = strrchr(dir, '/');
+    if (slash) *slash = 0;
+    if (!gamelib_full_id(dir, want, sizeof want)) {
+        snprintf(why, why_size, "The game's code didn't unpack correctly.");
+        return false;
+    }
+    const char *have = strrchr(p4g_game_tables()->id, '-'), *got = strrchr(want, '-');
+    if (!have || !got || strcmp(have, got)) {
+        snprintf(why, why_size, "That's another version of the game (build %s). This app runs version 1.0.0: pick the "
+                                "base game without updates.", got ? got + 1 : "?");
+        return false;
+    }
+    return true;
+}
+
 // ------------------------------------------------------------------ the TV-static backdrop: diagonal stripes
 @interface P4GStripes : UIView
 @end
@@ -102,14 +163,15 @@ static void join_split_files(NSString *dir) {
 @end
 
 // ------------------------------------------------------------------ the screen
-@interface P4GLauncher : UIViewController
+@interface P4GLauncher : UIViewController <UIDocumentPickerDelegate>
 @property(nonatomic, copy) NSString *game;
 @property(nonatomic) BOOL done;
 @end
 
 @implementation P4GLauncher {
     UILabel *_status, *_saveLabel;
-    UIButton *_play;
+    UIButton *_play, *_import;
+    UIProgressView *_progress;
     UISegmentedControl *_fps, *_touch, *_res;
     UISwitch *_showFps;
 }
@@ -194,12 +256,29 @@ static UIStackView *row(NSString *title, UIView *control) {
     [_play.widthAnchor constraintEqualToConstant:230].active = YES;
     [_play addTarget:self action:@selector(play) forControlEvents:UIControlEventTouchUpInside];
 
-    UIStackView *left = [[UIStackView alloc] initWithArrangedSubviews:@[title, _status, _saveLabel, _play]];
+    _import = [UIButton buttonWithType:UIButtonTypeSystem];
+    _import.titleLabel.font = [UIFont systemFontOfSize:15 weight:UIFontWeightHeavy];
+    _import.titleLabel.lineBreakMode = NSLineBreakByTruncatingMiddle;
+    [_import setTitleColor:P4G_YELLOW forState:UIControlStateNormal];
+    _import.backgroundColor = P4G_BLACK;
+    _import.layer.cornerRadius = 6;
+    _import.layer.borderColor = P4G_YELLOW.CGColor;
+    _import.layer.borderWidth = 2;
+    _import.contentEdgeInsets = UIEdgeInsetsMake(0, 16, 0, 16);
+    [_import.heightAnchor constraintEqualToConstant:42].active = YES;
+    [_import.widthAnchor constraintLessThanOrEqualToConstant:360].active = YES;
+    [_import addTarget:self action:@selector(importTapped) forControlEvents:UIControlEventTouchUpInside];
+    _progress = [[UIProgressView alloc] initWithProgressViewStyle:UIProgressViewStyleDefault];
+    _progress.progressTintColor = P4G_YELLOW;
+    _progress.trackTintColor = [UIColor colorWithWhite:1 alpha:0.15];
+    [_progress.widthAnchor constraintEqualToConstant:320].active = YES;
+
+    UIStackView *left = [[UIStackView alloc] initWithArrangedSubviews:@[title, _status, _progress, _saveLabel, _import, _play]];
     left.axis = UILayoutConstraintAxisVertical;
     left.alignment = UIStackViewAlignmentLeading;
     left.spacing = 16;
     left.translatesAutoresizingMaskIntoConstraints = NO;
-    [left setCustomSpacing:26 afterView:_saveLabel];
+    [left setCustomSpacing:22 afterView:_import];
 
     // right: settings
     _fps = segments(@[@"60 FPS", @"30 FPS"], g_settings.fps_cap == FPS_30 ? 1 : 0);
@@ -244,6 +323,21 @@ static UIStackView *row(NSString *title, UIView *control) {
 }
 
 - (void)refresh {
+    NSString *docs = [self.game stringByDeletingLastPathComponent];
+    if (g_importing) {
+        double f = g_imp.total > 0 ? (double)g_imp.done / (double)g_imp.total : 0;
+        _status.text = [NSString stringWithFormat:@"Importing the game: %s… %d%%\nKeep the app open; it takes a few minutes.",
+                                                  (const char *)g_imp.phase, (int)(fmin(f, 1) * 100)];
+        _status.textColor = P4G_YELLOW;
+        _progress.hidden = NO;
+        _progress.progress = (float)fmin(f, 1);
+        _import.hidden = YES;
+        _play.enabled = NO;
+        _play.alpha = 0.45;
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC / 4), dispatch_get_main_queue(), ^{ [self refresh]; });
+        return;
+    }
+    _progress.hidden = YES;
     NSString *romfs = [self.game stringByAppendingPathComponent:@"romfs"];
     if (g_join_pct < 0 && !g_join_error && split_files(romfs).count) {  // files sent over in parts: join them first
         g_join_pct = 0;
@@ -262,17 +356,26 @@ static UIStackView *row(NSString *title, UIView *control) {
     }
     FilesState st = files_state(self.game);
     BOOL ready = st.exefs && st.romfs && !g_join_error;
-    if (g_join_error) {
+    NSString *dump = find_dump(docs), *keys = find_keys(docs);
+    _import.hidden = ready;
+    [_import setTitle:dump ? [NSString stringWithFormat:@"IMPORT %@", dump.lastPathComponent.uppercaseString]
+                           : @"IMPORT GAME (NSP / NSZ / XCI)" forState:UIControlStateNormal];
+    if (g_imp.error[0]) {
+        _status.text = [NSString stringWithFormat:@"Import failed: %s", g_imp.error];
+        _status.textColor = P4G_YELLOW;
+    } else if (g_join_error) {
         _status.text = g_join_error;
         _status.textColor = P4G_YELLOW;
     } else if (ready) {
         _status.text = @"Game files found. Your save data stays in the Save folder.";
         _status.textColor = UIColor.whiteColor;
     } else {
-        _status.text = [NSString stringWithFormat:
-            @"Game files missing%@%@.\nFiles app → On My iPhone → Persona 4 Golden → game: put your own dump's exefs "
-            @"(main, main.npdm, sdk, subsdk0) in game/exefs and its romfs (data.cpk, ...) in game/romfs.",
-            st.exefs ? @"" : @": exefs", st.romfs ? @"" : (st.exefs ? @": romfs" : @", romfs")];
+        _status.text = dump && !keys
+            ? [NSString stringWithFormat:@"Found %@. Now add your console's prod.keys: put it in the same folder, or tap "
+                                         @"Import and pick it.", dump.lastPathComponent]
+            : dump ? @"Your game dump is ready to import: tap Import."
+            : @"No game files yet. Tap Import and pick your own Persona 4 Golden dump (NSP, NSZ, XCI or XCZ, version 1.0.0) "
+              @"together with your prod.keys. Or put both in Files → On My iPhone → Persona 4 Golden.";
         _status.textColor = P4G_YELLOW;
     }
     _saveLabel.text = st.saves
@@ -281,6 +384,105 @@ static UIStackView *row(NSString *title, UIView *control) {
         : @"No save yet. To continue a MeloNX / Ryujinx save, copy its files into Files → Persona 4 Golden → Save.";
     _play.enabled = ready;
     _play.alpha = ready ? 1 : 0.45;
+}
+
+// ------------------------------------------------------------------ import
+- (void)importTapped {
+    NSString *docs = [self.game stringByDeletingLastPathComponent];
+    NSString *dump = find_dump(docs);
+    if (dump && find_keys(docs)) { [self importFrom:[NSURL fileURLWithPath:dump] scoped:NO]; return; }
+    UIDocumentPickerViewController *pick = [[UIDocumentPickerViewController alloc]
+        initForOpeningContentTypes:@[UTTypeItem] asCopy:NO];  // (read in place: the dump is ~9 GB)
+    pick.allowsMultipleSelection = YES;
+    pick.delegate = self;
+    [self presentViewController:pick animated:YES completion:nil];
+}
+
+- (void)documentPicker:(UIDocumentPickerViewController *)picker didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
+    NSString *docs = [self.game stringByDeletingLastPathComponent];
+    NSURL *dump = nil;
+    for (NSURL *u in urls) {
+        NSString *name = u.lastPathComponent.lowercaseString;
+        if (import_is_game_file(name.fileSystemRepresentation)) { dump = u; continue; }
+        if (![name hasSuffix:@".keys"] && ![name hasSuffix:@".txt"]) continue;
+        // keys: copied into the app's private Library (small; the picked file may not stay reachable)
+        BOOL scoped = [u startAccessingSecurityScopedResource];
+        NSData *d = [NSData dataWithContentsOfURL:u];
+        if (scoped) [u stopAccessingSecurityScopedResource];
+        NSString *to = [private_dir() stringByAppendingPathComponent:[name isEqualToString:@"title.keys"] ? @"title.keys" : @"prod.keys"];
+        if (d) [d writeToFile:to atomically:YES];
+    }
+    g_imp.error[0] = 0;
+    if (!dump && find_dump(docs)) dump = [NSURL fileURLWithPath:find_dump(docs)];
+    if (dump && find_keys(docs)) [self importFrom:dump scoped:YES];
+    else {
+        snprintf(g_imp.error, sizeof g_imp.error, "%s", !dump ? "pick the game (an NSP, NSZ, XCI or XCZ file) too."
+                                                             : "pick your prod.keys too (select both files in the picker).");
+        [self refresh];
+    }
+}
+
+- (void)importFrom:(NSURL *)url scoped:(BOOL)scoped {
+    NSString *docs = [self.game stringByDeletingLastPathComponent], *keys = find_keys(docs), *game = self.game;
+    NSString *tmp = [docs stringByAppendingPathComponent:@".import"];
+    BOOL in_docs = [url.path.stringByStandardizingPath hasPrefix:docs.stringByStandardizingPath];
+    NSFileManager *fm = NSFileManager.defaultManager;
+    [fm removeItemAtPath:tmp error:nil];
+    memset(&g_imp, 0, sizeof g_imp);
+    g_imp.check_exefs = check_build;
+    g_imp.phase = "Opening the game file";
+    g_importing = YES;
+    UIApplication.sharedApplication.idleTimerDisabled = YES;  // (the screen locking would suspend it)
+    __block UIBackgroundTaskIdentifier bg = [UIApplication.sharedApplication beginBackgroundTaskWithExpirationHandler:^{
+        [UIApplication.sharedApplication endBackgroundTask:bg];
+    }];
+    [self refresh];
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        BOOL access = scoped && [url startAccessingSecurityScopedResource];
+        __block BOOL ok = NO;
+        NSError *err = nil;
+        // (coordinated: a file in iCloud Drive is downloaded first)
+        [[NSFileCoordinator new] coordinateReadingItemAtURL:url options:NSFileCoordinatorReadingWithoutChanges error:&err
+                                                 byAccessor:^(NSURL *u) {
+            ok = import_game(u.path.fileSystemRepresentation, keys.fileSystemRepresentation, tmp.fileSystemRepresentation, &g_imp);
+        }];
+        if (err && !g_imp.error[0]) snprintf(g_imp.error, sizeof g_imp.error, "%s", err.localizedDescription.UTF8String);
+        if (access) [url stopAccessingSecurityScopedResource];
+        if (ok) {  // the new files replace the old ones
+            [fm createDirectoryAtPath:game withIntermediateDirectories:YES attributes:nil error:nil];
+            for (NSString *part in @[@"exefs", @"romfs"]) {
+                NSString *to = [game stringByAppendingPathComponent:part];
+                [fm removeItemAtPath:to error:nil];
+                if (![fm moveItemAtPath:[tmp stringByAppendingPathComponent:part] toPath:to error:nil]) {
+                    ok = NO;
+                    snprintf(g_imp.error, sizeof g_imp.error, "Couldn't move the game files into place.");
+                }
+            }
+        }
+        [fm removeItemAtPath:tmp error:nil];
+        fprintf(stderr, "[import] %s\n", ok ? "done" : g_imp.error);
+        dispatch_async(dispatch_get_main_queue(), ^{
+            g_importing = NO;
+            UIApplication.sharedApplication.idleTimerDisabled = NO;
+            [UIApplication.sharedApplication endBackgroundTask:bg];
+            [self refresh];
+            if (ok && in_docs) [self offerDelete:url.path];
+        });
+    });
+}
+
+- (void)offerDelete:(NSString *)path {
+    unsigned long long sz = [NSFileManager.defaultManager attributesOfItemAtPath:path error:nil].fileSize;
+    UIAlertController *a = [UIAlertController alertControllerWithTitle:@"Game imported"
+        message:[NSString stringWithFormat:@"The game no longer needs %@ (%.1f GB). Delete it to free the space?",
+                                           path.lastPathComponent, sz / 1e9]
+        preferredStyle:UIAlertControllerStyleAlert];
+    [a addAction:[UIAlertAction actionWithTitle:@"Keep" style:UIAlertActionStyleCancel handler:nil]];
+    [a addAction:[UIAlertAction actionWithTitle:@"Delete" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *x) {
+        [NSFileManager.defaultManager removeItemAtPath:path error:nil];
+        [self refresh];
+    }]];
+    [self presentViewController:a animated:YES completion:nil];
 }
 
 - (void)play {
