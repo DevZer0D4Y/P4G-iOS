@@ -35,6 +35,9 @@ GEN_OBJ  := $(patsubst $(GEN)/%.c,$(B)/game/%.o,$(GEN_SRC)) $(B)/game/gamelib_en
 GAMELIB_ID    := $(shell cat tools/gen.py tools/lifter.py tools/analyze.py tools/nso.py tools/passes.py tools/simd_c.py \
                    tools/patches_p4g.py tools/builds.py runtime/cpu.h runtime/simd.h runtime/simd_fp.h runtime/gamelib.h \
                    | shasum -a 256 | cut -c1-16)
+# (the files GAMELIB_ID hashes: a change to one rebuilds both ids, or the library and the app disagree)
+GAMELIB_ID_SRC := tools/gen.py tools/lifter.py tools/analyze.py tools/nso.py tools/passes.py tools/simd_c.py \
+                  tools/patches_p4g.py tools/builds.py runtime/cpu.h runtime/simd.h runtime/simd_fp.h runtime/gamelib.h
 GAMELIB_BUILD := $(shell cut -c1-16 $(GEN)/main/main_build_id.txt 2>/dev/null)
 TRANSLATOR_ID := $(shell cat runtime/nvn/maxwell/translate.c runtime/nvn/maxwell/shader.h | shasum -a 256 | cut -c1-12)
 
@@ -52,12 +55,13 @@ $(B)/rt/%.o: %.m $(RT_HDRS) | $(B)/inc/smaa_hlsl.inc
 
 $(B)/rt/runtime/nvn/shader_prep.o: RTFLAGS += -DSHADER_TRANSLATOR_ID='"$(TRANSLATOR_ID)"'
 $(B)/rt/runtime/gamelib.o: RTFLAGS += -DGAMELIB_ID='"$(GAMELIB_ID)"'
+$(B)/rt/runtime/gamelib.o: $(GAMELIB_ID_SRC)
 
 $(B)/game/%.o: $(GEN)/%.c runtime/cpu.h runtime/simd.h runtime/simd_fp.h
 	@mkdir -p $(dir $@)
 	@$(CC) $(GENFLAGS) -c $< -o $@ && echo "game $(notdir $<)"
 
-$(B)/game/gamelib_entry.o: tools/gamelib_entry.c runtime/gamelib.h $(wildcard $(GEN)/main/main_build_id.txt)
+$(B)/game/gamelib_entry.o: tools/gamelib_entry.c runtime/gamelib.h $(GAMELIB_ID_SRC) $(wildcard $(GEN)/main/main_build_id.txt)
 	@mkdir -p $(dir $@)
 	$(CC) $(GENFLAGS) -DGAMELIB_ID='"$(GAMELIB_ID)-$(GAMELIB_BUILD)"' -c $< -o $@
 

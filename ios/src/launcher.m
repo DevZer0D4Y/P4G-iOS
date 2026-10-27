@@ -172,8 +172,9 @@ static bool check_build(const char *exefs, char *why, size_t why_size) {
     UILabel *_status, *_saveLabel;
     UIButton *_play, *_import;
     UIProgressView *_progress;
-    UISegmentedControl *_fps, *_touch, *_res;
+    UISegmentedControl *_fps, *_touch;
     UISwitch *_showFps;
+    UISlider *_res, *_sharp, *_camera, *_opacity;
 }
 
 - (UIInterfaceOrientationMask)supportedInterfaceOrientations { return UIInterfaceOrientationMaskLandscape; }
@@ -203,6 +204,32 @@ static UISegmentedControl *segments(NSArray<NSString *> *items, NSInteger select
     s.backgroundColor = [UIColor colorWithWhite:1 alpha:0.12];
     s.translatesAutoresizingMaskIntoConstraints = NO;
     return s;
+}
+
+// A percentage slider (lo .. hi %, in steps) with its value beside it, in the game's yellow
+static UIStackView *percent_slider(UISlider *__strong *out, int lo, int hi, int step, float value) {
+    UISlider *sl = [UISlider new];
+    sl.minimumValue = lo / 100.0f, sl.maximumValue = hi / 100.0f;
+    sl.value = value;
+    sl.minimumTrackTintColor = P4G_YELLOW;
+    [sl.widthAnchor constraintEqualToConstant:150].active = YES;
+    UILabel *pct = label(@"", 13, UIFontWeightHeavy, P4G_YELLOW);
+    pct.font = [UIFont monospacedDigitSystemFontOfSize:13 weight:UIFontWeightHeavy];
+    [pct.widthAnchor constraintEqualToConstant:44].active = YES;
+    __weak UISlider *weak = sl;
+    void (^update)(void) = ^{
+        UISlider *s2 = weak;
+        int v = (int)lroundf(s2.value * 100 / step) * step;  // (snapped to the step)
+        s2.value = v / 100.0f;
+        pct.text = [NSString stringWithFormat:@"%d%%", v];
+    };
+    [sl addAction:[UIAction actionWithHandler:^(UIAction *a) { update(); }] forControlEvents:UIControlEventValueChanged];
+    update();
+    *out = sl;
+    UIStackView *r = [[UIStackView alloc] initWithArrangedSubviews:@[sl, pct]];
+    r.spacing = 8;
+    r.alignment = UIStackViewAlignmentCenter;
+    return r;
 }
 
 static UIStackView *row(NSString *title, UIView *control) {
@@ -283,20 +310,26 @@ static UIStackView *row(NSString *title, UIView *control) {
     // right: settings
     _fps = segments(@[@"60 FPS", @"30 FPS"], g_settings.fps_cap == FPS_30 ? 1 : 0);
     _touch = segments(@[@"Auto", @"On", @"Off"], g_settings.touch_mode);
-    _res = segments(@[@"Full", @"75%", @"50%"],
-                    g_settings.res_auto || g_settings.res_mode == RES_MATCH ? 0 : g_settings.res_mode == RES_Q75 ? 1 : 2);
     _showFps = [UISwitch new];
     _showFps.on = g_settings.show_fps;
     _showFps.onTintColor = P4G_YELLOW;
+    // Resolution: of the screen's own (above 100 %: drawn sharper than the screen, at more GPU cost)
+    float res = g_settings.res_auto || g_settings.res_mode == RES_MATCH ? g_settings.res_scale
+              : g_settings.res_mode == RES_Q75 ? 0.75f : g_settings.res_mode == RES_Q50 ? 0.5f : 1;
+    UIStackView *resRow = percent_slider(&_res, 50, 150, 5, res);
+    UIStackView *sharpRow = percent_slider(&_sharp, 0, 100, 5, g_settings.sharpness);
+    UIStackView *cameraRow = percent_slider(&_camera, 25, 200, 5, g_settings.camera_sens);
+    UIStackView *opacity = percent_slider(&_opacity, 10, 100, 5, g_settings.touch_opacity);
     UILabel *hint = label(@"Touch controls hide while a controller is connected. Auto: shown without one.", 11,
                           UIFontWeightRegular, [UIColor colorWithWhite:1 alpha:0.6]);
     UIStackView *right = [[UIStackView alloc] initWithArrangedSubviews:@[
-        row(@"Frame rate", _fps), row(@"Resolution", _res), row(@"Touch pad", _touch), row(@"Show FPS", _showFps), hint
+        row(@"Frame rate", _fps), row(@"Resolution", resRow), row(@"Sharpness", sharpRow), row(@"Touch pad", _touch),
+        row(@"Pad opacity", opacity), row(@"Camera speed", cameraRow), row(@"Show FPS", _showFps), hint
     ]];
     right.axis = UILayoutConstraintAxisVertical;
-    right.spacing = 14;
+    right.spacing = 8;
     right.translatesAutoresizingMaskIntoConstraints = NO;
-    right.layoutMargins = UIEdgeInsetsMake(18, 18, 18, 18);
+    right.layoutMargins = UIEdgeInsetsMake(14, 18, 14, 18);
     right.layoutMarginsRelativeArrangement = YES;
     right.backgroundColor = [UIColor colorWithWhite:0 alpha:0.55];
     right.layer.cornerRadius = 12;
@@ -489,8 +522,11 @@ static UIStackView *row(NSString *title, UIView *control) {
     g_settings.fps_cap = _fps.selectedSegmentIndex == 1 ? FPS_30 : FPS_60;
     g_settings.touch_mode = (int)_touch.selectedSegmentIndex;
     g_settings.show_fps = _showFps.on;
-    if (_res.selectedSegmentIndex == 0) g_settings.res_auto = true, g_settings.res_mode = RES_MATCH;
-    else g_settings.res_auto = false, g_settings.res_mode = _res.selectedSegmentIndex == 1 ? RES_Q75 : RES_Q50;
+    g_settings.touch_opacity = _opacity.value;
+    g_settings.sharpness = _sharp.value;
+    g_settings.camera_sens = _camera.value;
+    g_settings.res_auto = true, g_settings.res_mode = RES_MATCH;  // (the slider's scale of it)
+    g_settings.res_scale = _res.value;
     settings_save();
     self.done = YES;
 }

@@ -10,10 +10,11 @@
 
 enum { SCREEN_FILTER_OFF, SCREEN_FILTER_GB, SCREEN_FILTER_GBC, SCREEN_FILTER_GRAY };
 
-// pf for the present shader (x: the mode)
+// pf for the present shader (x: the mode, y: the sharpness, 0 .. 1)
 static inline void screen_filter_params(float pf[4]) {
     pf[0] = 0;  // (no filters in P4G: the shader keeps the hook)
-    pf[1] = pf[2] = pf[3] = 0;
+    pf[1] = g_settings.sharpness;
+    pf[2] = pf[3] = 0;
 }
 
 #define SCREEN_FILTER_SRC(V3)                                                                                          \

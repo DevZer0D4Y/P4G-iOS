@@ -850,6 +850,17 @@ static const char *present_src =
     "fragment float4 fs(V in [[stage_in]], texture2d<float> t [[texture(0)]], sampler s [[sampler(0)]],\n"
     "                   constant float4 &pf [[buffer(0)]]) {\n"
     "  float3 c = t.sample(s, in.uv).rgb;\n"
+    // Sharpness (pf.y, the start screen's slider): contrast-adaptive sharpening on the game image's own texels, in the
+    // manner of AMD's CAS / FSR 1 RCAS - strongest where the local contrast is low, held back on edges (no halos)
+    "  if (pf.y > 0.0) {\n"
+    "    float2 d = 1.0 / float2(t.get_width(), t.get_height());\n"
+    "    float3 n = t.sample(s, in.uv - float2(0, d.y)).rgb, so = t.sample(s, in.uv + float2(0, d.y)).rgb;\n"
+    "    float3 w = t.sample(s, in.uv - float2(d.x, 0)).rgb, e = t.sample(s, in.uv + float2(d.x, 0)).rgb;\n"
+    "    float3 mn = min(c, min(min(n, so), min(w, e))), mx = max(c, max(max(n, so), max(w, e)));\n"
+    "    float3 amp = sqrt(clamp(min(mn, 1.0 - mx) / max(mx, 1e-4), 0.0, 1.0));\n"
+    "    float3 k = -amp * mix(0.125, 0.2, pf.y);\n"
+    "    c = clamp((c + (n + so + w + e) * k) / (1.0 + 4.0 * k), 0.0, 1.0);\n"
+    "  }\n"
     SCREEN_FILTER_SRC("float3")  // (the screen filter: screen_filter.h)
     "  return float4(c, 1.0); }\n";
 
@@ -1639,6 +1650,11 @@ void ui_window_init(void) {
     settings_resolve_defaults(false);  // (Apple GPUs keep MetalFX as the default upscaler)
     layer.device = dev;
     layer.pixelFormat = MTLPixelFormatBGRA8Unorm;
+    // The game's image is sRGB. Untagged (nil), the layer isn't colour-matched: on a P3 display (every recent iPhone,
+    // Mac laptops) the sRGB bytes show as P3 ones, too saturated and shifted. Tagged, the system maps it to the display.
+    CGColorSpaceRef srgb = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
+    layer.colorspace = srgb;
+    CGColorSpaceRelease(srgb);
     // The display's vsync stays on: without it frames show as soon as they're done, which tears (seen on a 5120x1440
     // display), for ~2-3 fps near the limit at most (the game paces itself to vi.c's emulated 60 Hz vsync, and the two
     // clocks drift). P4G_DISPLAY_SYNC=0: off (tests).

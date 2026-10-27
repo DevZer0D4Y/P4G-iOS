@@ -13,7 +13,7 @@
 static char g_line[512];   // the first fatal line (FATAL message / "signal 11 accessing 0x10")
 static uint64_t g_pc;      // a crash's host pc (0: a FATAL)
 int rt_romfs_files = -1;   // the game's own RomFS files (runtime/services/fs.c; -1: not read yet)
-enum { ROMFS_FILES = 3836 };  // (every supported version: runtime/ui/launcher.mm counts the same)
+enum { ROMFS_FILES = 12 };  // (P4G 1.0.0: data.cpk, data_movie.cpk and the language CPKs)
 
 void rt_fatal_msg(const char *fmt, ...) {
     char b[512];

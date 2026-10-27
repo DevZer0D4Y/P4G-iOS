@@ -286,6 +286,11 @@ class Module:
             w = self.word(a)
             if self.lift(a).kind not in ('op', 'asm'):
                 return False
+            # SIMD / FP data processing and SIMD loads write a V register: its number in bits 0-4 isn't the br's
+            # (P4G 0xd1d84: `mov v11.16b, v10.16b` hid the `add x11` table jump, and case 2 of it aborted)
+            if (w & 0x0E000000) == 0x0E000000 or (w & 0x0A000000) == 0x08000000 and bits(w, 26, 1):
+                a -= 4
+                continue
             if (w & 31) == rn:
                 if (w & 0x1F000000) == 0x0B000000:  # ADD/SUB (shifted or extended register)
                     return True

@@ -10,6 +10,10 @@
 #include <math.h>
 #include <sys/stat.h>
 #include <SDL3/SDL_timer.h>
+#include <TargetConditionals.h>
+#if TARGET_OS_IPHONE
+#include <os/proc.h>
+#endif
 
 #include "maxwell/shader.h"
 #include "nvn.h"
@@ -126,6 +130,15 @@ const char *renderer_stats(void) {
     struct task_vm_info vmi;
     mach_msg_type_number_t vn = TASK_VM_INFO_COUNT;
     uint64_t foot = task_info(mach_task_self(), TASK_VM_INFO, (task_info_t)&vmi, &vn) == KERN_SUCCESS ? vmi.phys_footprint : 0;
+#if TARGET_OS_IPHONE  // (iOS ends the app without a crash report past its memory limit: the headroom, for the logs)
+    static uint64_t low_free = UINT64_MAX;
+    uint64_t avail = os_proc_available_memory();
+    if (low_free == UINT64_MAX) LOG("[mem] limit: %.0f MB footprint + %.0f MB left\n", foot / 1048576.0, avail / 1048576.0);
+    if (avail < low_free) {
+        low_free = avail;
+        if (avail < 512ull << 20) LOG("[mem] low: %.0f MB left before iOS ends the app (footprint %.0f MB)\n", avail / 1048576.0, foot / 1048576.0);
+    }
+#endif
     snprintf(stats_text, sizeof stats_text, "%llu draws, %llu skipped, %llu passes, %llu dispatches, %llu flushes, gpu %.0fms, wait %.0fms, compile %d/%.0fms, fbcopy %llu | tex %d (%.0f MB) views %d snaps %lu vcopy %llu/%.0fKB mem %.0f MB | waits fence %.0fms/%llu flush %.0fms/%llu all %.0fms/%llu | deferred: clears as load %llu, clear passes %llu | counters gpu %llu | pace %s, %llu frames over", stat_draws, stat_skipped,
              stat_passes, stat_dispatches, stat_flushes, stat_gpu_s * 1000.0, (double)stat_wait_ns / 1e6 * 125.0 / 3.0, stat_compiles, stat_compile_ms, stat_feedback_copies,
              g_tex_live, g_tex_live_bytes / 1048576.0, g_views_live, (unsigned long)(g_snap_copies ? g_snap_copies.count : 0), (unsigned long long)stat_vcopy, stat_vcopy_bytes / 1024.0, foot / 1048576.0, stat_wait_by[0] / 24e3, (unsigned long long)stat_wait_n[0], stat_wait_by[1] / 24e3, (unsigned long long)stat_wait_n[1], stat_wait_by[2] / 24e3, (unsigned long long)stat_wait_n[2], (unsigned long long)stat_clears_as_load, (unsigned long long)stat_clear_passes,
@@ -733,10 +746,27 @@ bool renderer_view_needs_format_flag(MTLPixelFormat base, MTLPixelFormat view) {
     return base != view && mtl_linear_twin(base) != mtl_linear_twin(view);
 }
 
+// Render targets with an sRGB format take the shader's values as they are, without the linear -> sRGB encode: Maxwell
+// only encodes with its FRAMEBUFFER_SRGB switch on, and P4G draws with it off - encoded, every pixel showed the
+// sRGB curve applied twice (the load screen's yellow (254,184,5) as (255,221,38), shadows grey). Sampling an sRGB
+// texture still decodes. P4G_SRGB_WRITES=1: encode as before (tests).
+static MTLPixelFormat rt_write_format(MTLPixelFormat pf) {
+    static int encode = -1;
+    if (encode < 0) encode = getenv("P4G_SRGB_WRITES") != NULL;
+    if (encode) return pf;
+    return pf == MTLPixelFormatRGBA8Unorm_sRGB ? MTLPixelFormatRGBA8Unorm
+         : pf == MTLPixelFormatBGRA8Unorm_sRGB ? MTLPixelFormatBGRA8Unorm : pf;
+}
+
 static id<MTLTexture> view_texture(NvnTexture *t, const NvnTextureView *v, bool has_view, bool render,
                                    id<MTLBlitCommandEncoder> blit) {
     id<MTLTexture> base = renderer_texture(t, blit, render);
-    if (!has_view || !v->setmask) return base;
+    if (!base) return base;
+    if (!has_view || !v->setmask) {
+        MTLPixelFormat raw = render ? rt_write_format(base.pixelFormat) : base.pixelFormat;
+        if (raw == base.pixelFormat) return base;
+        return view_cached(base, (uint64_t)raw | 1ull << 63, ^{ return [base newTextureViewWithPixelFormat:raw]; });
+    }
     MTLPixelFormat pf = (v->setmask & 4) ? renderer_pixel_format(v->format) : base.pixelFormat;
     if (!mtl_view_compatible(base.pixelFormat, pf) ||  // (see mtl_view_compatible: the base format instead)
         (renderer_view_needs_format_flag(base.pixelFormat, pf) && !(base.usage & MTLTextureUsagePixelFormatView))) {
@@ -746,6 +776,7 @@ static id<MTLTexture> view_texture(NvnTexture *t, const NvnTextureView *v, bool 
                 "(logged once)\n", t->width, t->height, t->format, (unsigned long)base.pixelFormat, v->format, (unsigned long)pf);
         pf = base.pixelFormat;
     }
+    if (render) pf = rt_write_format(pf);
     NSUInteger lv0 = (v->setmask & 1) ? v->base_level : 0;
     NSUInteger nlv = (v->setmask & 1) && v->num_levels ? v->num_levels : base.mipmapLevelCount - lv0;
     NSUInteger ly0 = (v->setmask & 2) ? v->min_layer : 0;
@@ -971,7 +1002,7 @@ static void td_record(NvnTexture *t, bool is_color, int kind, const void *color,
 static void attachment_formats_rec(MTLRenderPipelineDescriptor *pd, const ShaderRec *r) {
     bool any = false;
     for (int i = 0; i < r->ncolor && i < 8; i++)
-        if (r->color[i]) { pd.colorAttachments[i].pixelFormat = renderer_pixel_format(r->cview[i] ? r->cview[i] : r->color[i]); any = true; }
+        if (r->color[i]) { pd.colorAttachments[i].pixelFormat = rt_write_format(renderer_pixel_format(r->cview[i] ? r->cview[i] : r->color[i])); any = true; }
     if (r->depth) {
         MTLPixelFormat pf = renderer_pixel_format(r->depth);
         if (renderer_format_is_depth(r->depth) && r->depth != 0x31) pd.depthAttachmentPixelFormat = pf;

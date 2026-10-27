@@ -41,9 +41,12 @@ typedef struct {
     int menu_confirm;
     int fps_cap;          // FPS_30 / FPS_60
     int touch_mode;       // TOUCH_*
-    float touch_opacity;  // 0.2 .. 1
+    float touch_opacity;  // 0.1 .. 1
     float touch_scale;    // 0.75 .. 1.5
     bool touch_haptics;
+    float res_scale;      // Match display's resolution x this: 0.5 .. 1.5 (above 1: drawn sharper than the screen)
+    float sharpness;      // the present pass's contrast-adaptive sharpening: 0 (off) .. 1
+    float camera_sens;    // the touch pad's camera stick: 0.25 .. 2
     bool menu_tip_seen;
 } Settings;
 

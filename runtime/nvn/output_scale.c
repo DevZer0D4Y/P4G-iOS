@@ -6,6 +6,8 @@
 //                  7680 x 2160); capped to the GPU's 16384-pixel texture limit. 1x on an integrated GPU: 720 lines,
 //                  what the game's own scaler picked there (UHD 770); its scaler is off now (see rt_game_dynres)
 //   .75x / .50x / .25x  of Match display (scaled up to the window - with MetalFX on macOS when chosen)
+//   Match display x g_settings.res_scale (the iOS start screen's Resolution slider, 50 .. 150 %): below 100 % scaled
+//                  up to the window, above it drawn sharper than the screen and scaled down (supersampling)
 //   Dynamic        Match display, lowered in steps while the GPU can't hold 60 fps and raised again when it can.
 //                  The render targets stay allocated at the Match display size (ax, ay) and the frame is drawn into
 //                  their top-left part at (sx, sy): no reallocation at a step, so no hitch (each step reallocated
@@ -464,6 +466,7 @@ void output_scale(double dw, double dh, bool reshape_allowed, double now, double
         else if (mode == RES_Q75) h *= 0.75;
         else if (mode == RES_Q25) h *= 0.25;
         else if (mode == RES_Q50) h *= 0.5;
+        else if (mode == RES_MATCH) h *= g_settings.res_scale > 0 ? g_settings.res_scale : 1;
     }
     h = fmax(h, 0.1);  // (.25x of a small window)
     double ax = h * shape, ay = h;

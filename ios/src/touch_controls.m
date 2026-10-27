@@ -2,7 +2,8 @@
 // speaker name plates, the date box, the clock ring). It feeds runtime/hle/input.c (input_touch_set) like a Switch
 // controller:
 //   left stick   floating: a touch in the lower left places it where the thumb lands
-//   right stick  a drag on the right side away from the buttons (the camera in dungeons)
+//   right stick  floating too: a drag on the right side away from the buttons (the camera in dungeons), with a dead
+//                zone, a gentle curve for fine turns, and a base that follows a long drag so turning back is immediate
 //   A B X Y      lower right, Switch layout       d-pad  left, above the stick
 //   ZL L         top left                         ZR R   right, below the game's date and weather
 //   - +          top centre                       L3 R3  bottom corners
@@ -67,6 +68,18 @@ void input_touch_set(uint64_t buttons, int32_t lx, int32_t ly, int32_t rx, int32
 
 static int32_t axis(CGFloat v) { return (int32_t)lround(fmax(-1, fmin(1, v)) * 32767); }
 
+// The camera stick's deflection (dx, dy in stick radii) -> axes: radial dead zone, then a curve so small drags turn
+// slowly and the full radius still turns at full speed; Settings "Camera speed" scales it (above 100 %, full speed
+// comes before the full radius)
+static void camera_axes(CGFloat dx, CGFloat dy, int32_t *x, int32_t *y) {
+    const CGFloat dead = 0.12;
+    CGFloat m = hypot(dx, dy);
+    if (m <= dead) { *x = *y = 0; return; }
+    CGFloat sens = g_settings.camera_sens > 0 ? g_settings.camera_sens : 1;
+    CGFloat out = fmin(1, pow(fmin(1, (m - dead) / (1 - dead)), 1.5) * sens);
+    *x = axis(dx / m * out), *y = axis(-dy / m * out);  // (the Switch's y is up)
+}
+
 - (void)publish {
     uint64_t held = 0;
     for (UITouch *t in _owner) {
@@ -82,8 +95,7 @@ static int32_t axis(CGFloat v) { return (int32_t)lround(fmax(-1, fmin(1, v)) * 3
         lx = axis(dx), ly = axis(-dy);  // (the Switch's y is up)
     }
     if (_rsTouch) {
-        CGFloat dx = (_rsPos.x - _rsOrigin.x) / (R * 0.8), dy = (_rsPos.y - _rsOrigin.y) / (R * 0.8);
-        rx = axis(dx), ry = axis(-dy);
+        camera_axes((_rsPos.x - _rsOrigin.x) / R, (_rsPos.y - _rsOrigin.y) / R, &rx, &ry);
     }
     input_touch_set(held, lx, ly, rx, ry);
     [self setNeedsDisplay];
@@ -101,7 +113,7 @@ static int32_t axis(CGFloat v) { return (int32_t)lround(fmax(-1, fmin(1, v)) * 3
             _lsOrigin = CGPointMake(fmax(p.x, R + 8), fmin(p.y, H - R - 8));
             _lsPos = p;
             [_owner setObject:@100 forKey:t];
-        } else if (!_rsTouch && p.x > W * 0.5) {  // camera drag
+        } else if (!_rsTouch && p.x > W * 0.5 && p.y > H * 0.22) {  // camera drag (not up by R / ZR and the date)
             _rsTouch = t;
             _rsOrigin = _rsPos = p;
             [_owner setObject:@101 forKey:t];
@@ -120,6 +132,8 @@ static int32_t axis(CGFloat v) { return (int32_t)lround(fmax(-1, fmin(1, v)) * 3
             if (m > R) _lsOrigin = CGPointMake(p.x - dx / m * R, p.y - dy / m * R);  // (the base follows a long drag)
             _lsPos = p;
         } else if (t == _rsTouch) {
+            CGFloat R = [self stickRadius], dx = p.x - _rsOrigin.x, dy = p.y - _rsOrigin.y, m = hypot(dx, dy);
+            if (m > R) _rsOrigin = CGPointMake(p.x - dx / m * R, p.y - dy / m * R);  // (so reversing turns back at once)
             _rsPos = p;
         } else {  // a finger sliding from one button to the next presses the new one
             int b = [self buttonAt:p];

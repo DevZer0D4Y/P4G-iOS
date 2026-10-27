@@ -40,6 +40,9 @@ GEN_OBJ  := $(patsubst $(GEN)/%.c,$(B)/obj/%.o,$(GEN_SRC)) $(B)/obj/gamelib_entr
 GAMELIB_ID := $(shell cat tools/gen.py tools/lifter.py tools/analyze.py tools/nso.py tools/passes.py tools/simd_c.py \
                 tools/patches_p4g.py tools/builds.py runtime/cpu.h runtime/simd.h runtime/simd_fp.h runtime/gamelib.h \
                 | shasum -a 256 | cut -c1-16)
+# (the files GAMELIB_ID hashes: a change to one rebuilds both ids, or the library and the app disagree)
+GAMELIB_ID_SRC := tools/gen.py tools/lifter.py tools/analyze.py tools/nso.py tools/passes.py tools/simd_c.py \
+                  tools/patches_p4g.py tools/builds.py runtime/cpu.h runtime/simd.h runtime/simd_fp.h runtime/gamelib.h
 GAMELIB_BUILD := $(shell cut -c1-16 $(GEN)/main/main_build_id.txt 2>/dev/null)
 
 EXE      := $(B)/p4g
@@ -56,6 +59,7 @@ $(B)/rt/%.o: runtime/%.m $(RT_HDRS)
 	$(CC) $(RTFLAGS) -fobjc-arc -c $< -o $@
 
 $(B)/rt/gamelib.o: RTFLAGS += -DGAMELIB_ID='"$(GAMELIB_ID)"'
+$(B)/rt/gamelib.o: $(GAMELIB_ID_SRC)
 
 $(EXE): $(RT_OBJ)
 	$(CC) -o $@.tmp $^ $(LDFLAGS)
@@ -65,7 +69,7 @@ $(B)/obj/%.o: $(GEN)/%.c runtime/cpu.h runtime/simd.h runtime/simd_fp.h
 	@mkdir -p $(dir $@)
 	@$(CC) $(GENFLAGS) -c $< -o $@
 
-$(B)/obj/gamelib_entry.o: tools/gamelib_entry.c runtime/gamelib.h $(wildcard $(GEN)/main/main_build_id.txt)
+$(B)/obj/gamelib_entry.o: tools/gamelib_entry.c runtime/gamelib.h $(GAMELIB_ID_SRC) $(wildcard $(GEN)/main/main_build_id.txt)
 	@mkdir -p $(dir $@)
 	$(CC) $(GENFLAGS) -DGAMELIB_ID='"$(GAMELIB_ID)-$(GAMELIB_BUILD)"' -c $< -o $@
 

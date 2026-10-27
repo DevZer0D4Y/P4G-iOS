@@ -31,6 +31,9 @@ Settings g_settings = {
     .touch_opacity = 0.85f,
     .touch_scale = 1.0f,
     .touch_haptics = true,
+    .res_scale = 1.0f,
+    .sharpness = 0.0f,
+    .camera_sens = 1.0f,
 };
 
 // The game's text and voice languages: data.cpk holds the Japanese base, and each other language is its own archive
@@ -129,13 +132,19 @@ void settings_load(void) {
         else if (!strcmp(key, "touch_opacity")) g_settings.touch_opacity = (float)atof(val);
         else if (!strcmp(key, "touch_scale")) g_settings.touch_scale = (float)atof(val);
         else if (!strcmp(key, "touch_haptics")) g_settings.touch_haptics = atoi(val) != 0;
+        else if (!strcmp(key, "resolution_scale")) g_settings.res_scale = (float)atof(val);
+        else if (!strcmp(key, "sharpness")) g_settings.sharpness = (float)atof(val);
+        else if (!strcmp(key, "camera_sensitivity")) g_settings.camera_sens = (float)atof(val);
         else if (!strcmp(key, "menu_tip_seen")) g_settings.menu_tip_seen = atoi(val) != 0;
         else bind_settings_load(key, val);  // bind_pad_* / bind_key_*: runtime/hle/bindings.c
     }
     fclose(f);
     g_settings.volume = clampf(g_settings.volume, 0, 2);
-    g_settings.touch_opacity = clampf(g_settings.touch_opacity, 0.2f, 1);
+    g_settings.touch_opacity = clampf(g_settings.touch_opacity, 0.1f, 1);
     g_settings.touch_scale = clampf(g_settings.touch_scale, 0.75f, 1.5f);
+    g_settings.res_scale = clampf(g_settings.res_scale, 0.5f, 1.5f);
+    g_settings.sharpness = clampf(g_settings.sharpness, 0, 1);
+    g_settings.camera_sens = clampf(g_settings.camera_sens, 0.25f, 2);
     if (g_settings.rumble_strength < 25 || g_settings.rumble_strength > 100) g_settings.rumble_strength = 100;
     LOG("[settings] loaded %s\n", SETTINGS_FILE);
 }
@@ -168,6 +177,8 @@ void settings_save(void) {
     fprintf(f, "touch = %s\n", touch[g_settings.touch_mode % 3]);
     fprintf(f, "touch_opacity = %.2f\ntouch_scale = %.2f\ntouch_haptics = %d\n", g_settings.touch_opacity,
             g_settings.touch_scale, g_settings.touch_haptics);
+    fprintf(f, "resolution_scale = %.2f\nsharpness = %.2f\ncamera_sensitivity = %.2f\n", g_settings.res_scale,
+            g_settings.sharpness, g_settings.camera_sens);
     fprintf(f, "menu_tip_seen = %d\n", g_settings.menu_tip_seen);
     bind_settings_save(f);
     fclose(f);

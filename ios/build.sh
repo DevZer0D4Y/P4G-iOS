@@ -7,6 +7,7 @@
 #   DEPS   SDL3 + FFmpeg built for iOS (include/, lib/; default $OUT/deps-ios)
 #   BUILD  the IPA's build number (default: the date and time)
 #   SKIP_GEN=1  reuse the generated code already in $OUT/gen-ios (GAME not needed)
+#   ICON   a square PNG to use as the app icon instead of the drawn one (kept out of this repository)
 #
 # The IPA holds the game's code, recompiled from YOUR files: it is for your own device. Don't share it.
 # Game data (romfs) is not in it: copy exefs/ and romfs/ into the app's game folder with the Files app.
@@ -41,7 +42,14 @@ cp "$B/P4G" "$APP/P4G"
 strip -x "$APP/P4G" 2>/dev/null || true
 sed -e "s/@VERSION@/$VERSION/" -e "s/@BUILD@/$BUILD/" ios/Info.plist > "$APP/Info.plist"
 plutil -lint "$APP/Info.plist" >/dev/null
-$PY ios/make_icon.py "$B/icons" || ls "$B"/icons/AppIcon*.png >/dev/null  # (no Pillow: the icons from the last build)
+if [ -n "${ICON:-}" ]; then  # the player's own icon, at the sizes Info.plist names
+  mkdir -p "$B/icons"
+  for spec in 60x60@2x:120 60x60@3x:180 76x76@2x~ipad:152 83.5x83.5@2x~ipad:167; do
+    sips -s format png -z "${spec#*:}" "${spec#*:}" "$ICON" --out "$B/icons/AppIcon${spec%:*}.png" >/dev/null
+  done
+else
+  $PY ios/make_icon.py "$B/icons" || ls "$B"/icons/AppIcon*.png >/dev/null  # (no Pillow: the icons from the last build)
+fi
 cp "$B"/icons/AppIcon*.png "$APP/"
 printf 'APPL????' > "$APP/PkgInfo"
 
